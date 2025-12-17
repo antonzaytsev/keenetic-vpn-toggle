@@ -19,6 +19,8 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
+  use Rack::CommonLogger, $stdout
+
   configure :development do
     register Sinatra::Reloader
     also_reload 'lib/*.rb'
@@ -27,10 +29,12 @@ class VpnManagerApp < Sinatra::Base
   configure do
     set :show_exceptions, false
     set :protection, false
+    set :logging, true
   end
 
   before do
     content_type :json
+    puts "[#{Time.now}] #{request.request_method} #{request.path} from #{request.ip} (Host: #{request.host})"
   end
 
   helpers do
