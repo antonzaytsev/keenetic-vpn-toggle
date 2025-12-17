@@ -10,11 +10,9 @@ const API_BASE = getApiBase()
 
 function App() {
   const [status, setStatus] = useState(null)
-  const [interfaces, setInterfaces] = useState([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
   const [error, setError] = useState(null)
-  const [selectedInterface, setSelectedInterface] = useState(null)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -31,31 +29,17 @@ function App() {
     }
   }, [])
 
-  const fetchInterfaces = useCallback(async () => {
-    try {
-      const response = await fetch(`${API_BASE}/interfaces`)
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Failed to fetch interfaces')
-      }
-      const data = await response.json()
-      setInterfaces(data.interfaces || [])
-    } catch (err) {
-      console.error('Failed to fetch interfaces:', err)
-    }
-  }, [])
-
   useEffect(() => {
     const loadData = async () => {
       setLoading(true)
-      await Promise.all([fetchStatus(), fetchInterfaces()])
+      await fetchStatus()
       setLoading(false)
     }
     loadData()
     
     const interval = setInterval(fetchStatus, 10000)
     return () => clearInterval(interval)
-  }, [fetchStatus, fetchInterfaces])
+  }, [fetchStatus])
 
   const handleToggle = async () => {
     setToggling(true)
@@ -178,33 +162,6 @@ function App() {
             </button>
           </div>
         </div>
-
-        {interfaces.length > 0 && (
-          <div className="interfaces-section">
-            <h3 className="section-title">Available VPN Interfaces</h3>
-            <div className="interfaces-grid">
-              {interfaces.map((iface) => (
-                <div 
-                  key={iface.name} 
-                  className={`interface-card ${iface.name === status?.vpn?.interface_name ? 'current' : ''}`}
-                >
-                  <div className="interface-header">
-                    <span className="interface-name">{iface.name}</span>
-                    <span className={`interface-status ${iface.enabled ? 'enabled' : 'disabled'}`}>
-                      {iface.enabled ? 'Enabled' : 'Disabled'}
-                    </span>
-                  </div>
-                  <div className="interface-details">
-                    <span className="interface-type">{iface.type}</span>
-                    {iface.description && (
-                      <span className="interface-description">{iface.description}</span>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </main>
 
       <footer className="footer">
