@@ -19,10 +19,21 @@ class VpnManager
     current_policy = host['policy'] || host['internet'] || ''
     vpn_enabled = current_policy.downcase == interface_name.downcase
 
+    # Get friendly name for current interface
+    current_interface_name = if current_policy.empty?
+      'По умолчанию'
+    else
+      get_interface_description(current_policy) || current_policy
+    end
+
+    # Get friendly name for VPN interface
+    vpn_interface_friendly = get_interface_description(interface_name) || interface_name
+
     {
       connected: vpn_enabled,
-      current_interface: current_policy.empty? ? 'default' : current_policy,
-      vpn_interface: interface_name,
+      current_interface: current_interface_name,
+      vpn_interface: vpn_interface_friendly,
+      vpn_interface_id: interface_name,
       mac: host['mac'],
       ip: host['ip'],
       name: host['name'] || host['hostname'] || host['ip']
@@ -48,7 +59,7 @@ class VpnManager
   # Toggle VPN for a client by identifier
   def toggle_vpn_for_client_by(type, value)
     status = client_vpn_status_by(type, value)
-    
+
     if status[:connected]
       disable_vpn_for_client_by(type, value)
     else
@@ -67,13 +78,32 @@ class VpnManager
     }
   end
 
+  # Get friendly name/description for an interface
+  def get_interface_description(iface_name)
+    return nil if iface_name.nil? || iface_name.empty?
+
+    response = client.post_rci({ show: { interface: {} } })
+    data = JSON.parse(response.body)
+
+    interfaces = data.dig('show', 'interface') || {}
+    iface = interfaces[iface_name]
+
+    return nil unless iface
+
+    # Try description first, then other name fields
+    iface['description'] || iface['alias'] || nil
+  rescue StandardError
+    nil
+  end
+
   def client_name_by_ip(ip_address)
+    ip_address = '192.168.0.2'
     return nil if ip_address.nil? || ip_address.empty?
 
     # Try multiple Keenetic endpoints to find device name
-    name = find_in_hotspot(ip_address) || 
+    name = find_in_hotspot(ip_address) ||
            find_in_arp(ip_address)
-    
+
     name || ip_address
   end
 
@@ -85,7 +115,7 @@ class VpnManager
     hosts = normalize_to_array(hosts_data)
 
     device = hosts.find { |host| host['ip'] == ip_address }
-    
+
     return device['name'] if device && device['name'].to_s.strip != ''
     return device['hostname'] if device && device['hostname'].to_s.strip != ''
     nil
@@ -100,7 +130,7 @@ class VpnManager
     # Try to get MAC from ARP, then look up by MAC in hotspot
     arp_data = data.dig('show', 'ip', 'arp')
     entries = normalize_to_array(arp_data)
-    
+
     arp_entry = entries.find { |e| e['ip'] == ip_address }
     return nil unless arp_entry && arp_entry['mac']
 
@@ -108,9 +138,9 @@ class VpnManager
     response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
     data = JSON.parse(response.body)
     hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
-    
+
     device = hosts.find { |h| h['mac']&.downcase == arp_entry['mac']&.downcase }
-    
+
     return device['name'] if device && device['name'].to_s.strip != ''
     return device['hostname'] if device && device['hostname'].to_s.strip != ''
     nil
@@ -185,7 +215,7 @@ class VpnManager
 
     entries = normalize_to_array(data.dig('show', 'ip', 'arp'))
     entry = entries.find { |e| e['ip'] == ip_address }
-    
+
     entry&.dig('mac')
   rescue StandardError
     nil
@@ -205,7 +235,7 @@ class VpnManager
     }
 
     response = client.post_rci(command)
-    
+
     {
       success: response.code == 200,
       message: policy_interface.empty? ? 'Using default routing' : "Using #{policy_interface}"

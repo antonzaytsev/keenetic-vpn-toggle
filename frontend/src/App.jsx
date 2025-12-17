@@ -30,16 +30,33 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const controller = new AbortController()
+    
     const loadData = async () => {
       setLoading(true)
-      await fetchStatus()
-      setLoading(false)
+      try {
+        const response = await fetch(`${API_BASE}/status`, { signal: controller.signal })
+        if (!response.ok) {
+          const data = await response.json()
+          throw new Error(data.error || 'Не удалось получить статус')
+        }
+        const data = await response.json()
+        setStatus(data)
+        setError(null)
+      } catch (err) {
+        if (err.name !== 'AbortError') {
+          setError(err.message)
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
+      }
     }
     loadData()
     
-    const interval = setInterval(fetchStatus, 10000)
-    return () => clearInterval(interval)
-  }, [fetchStatus])
+    return () => controller.abort()
+  }, [])
 
   const handleToggle = async () => {
     setToggling(true)

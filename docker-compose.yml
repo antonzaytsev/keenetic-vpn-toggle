@@ -2,6 +2,8 @@ services:
   backend:
     build: ./backend
     network_mode: host
+    stdin_open: true
+    tty: true
     environment:
       - KEENETIC_HOST=${KEENETIC_HOST:-192.168.1.1}
       - KEENETIC_LOGIN=${KEENETIC_LOGIN:-admin}
@@ -10,7 +12,7 @@ services:
       - RACK_ENV=development
       - BUNDLE_PATH=/bundle
       - PORT=${BACKEND_PORT:-4567}
-    command: sh -c "bundle install && bundle exec rerun --background --dir /app -- puma -C config/puma.rb"
+    command: sh -c "bundle install && bundle exec puma -C config/puma.rb"
     volumes:
       - ./backend:/app
       - bundle:/bundle
