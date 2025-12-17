@@ -4,6 +4,7 @@ require 'sinatra/base'
 require 'sinatra/json'
 require 'rack/cors'
 require 'json'
+require 'socket'
 
 require_relative 'lib/keenetic_client'
 require_relative 'lib/vpn_manager'
@@ -45,6 +46,23 @@ class VpnManagerApp < Sinatra::Base
     rescue JSON::ParserError
       {}
     end
+
+    def client_ip
+      # Check for forwarded IP first (if behind proxy)
+      request.env['HTTP_X_FORWARDED_FOR']&.split(',')&.first&.strip ||
+        request.env['HTTP_X_REAL_IP'] ||
+        request.ip
+    end
+
+    def resolve_client_identifier
+      ip = client_ip
+      # If localhost, use hostname to find device in Keenetic
+      if ip == '127.0.0.1' || ip == '::1' || ip&.start_with?('127.')
+        { type: :hostname, value: Socket.gethostname.split('.').first }
+      else
+        { type: :ip, value: ip }
+      end
+    end
   end
 
   # Health check
@@ -52,15 +70,20 @@ class VpnManagerApp < Sinatra::Base
     json({ status: 'ok' })
   end
 
-  # Get client info and VPN status
+  # Get client's VPN status
   get '/api/status' do
     begin
-      client_info = vpn_manager.client_info
-      vpn_status = vpn_manager.status
+      router_info = vpn_manager.client_info
+      identifier = resolve_client_identifier
+      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
 
       json({
-        client: client_info,
-        vpn: vpn_status
+        client: router_info,
+        vpn: vpn_status,
+        requester: {
+          ip: vpn_status[:ip] || client_ip,
+          name: vpn_status[:name]
+        }
       })
     rescue KeeneticClient::ClientError => e
       status 503
@@ -71,25 +94,12 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
-  # Get available VPN interfaces
-  get '/api/interfaces' do
-    begin
-      interfaces = vpn_manager.available_interfaces
-      json({ interfaces: interfaces })
-    rescue KeeneticClient::ClientError => e
-      status 503
-      json({ error: e.message })
-    rescue StandardError => e
-      status 500
-      json({ error: "Internal error: #{e.message}" })
-    end
-  end
-
-  # Toggle VPN interface
+  # Toggle VPN for the requesting client
   post '/api/toggle' do
     begin
-      result = vpn_manager.toggle
-      vpn_status = vpn_manager.status
+      identifier = resolve_client_identifier
+      result = vpn_manager.toggle_vpn_for_client_by(identifier[:type], identifier[:value])
+      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
 
       json({
         result: result,
@@ -104,11 +114,12 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
-  # Enable VPN interface
+  # Enable VPN for the requesting client
   post '/api/enable' do
     begin
-      result = vpn_manager.enable
-      vpn_status = vpn_manager.status
+      identifier = resolve_client_identifier
+      result = vpn_manager.enable_vpn_for_client_by(identifier[:type], identifier[:value])
+      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
 
       json({
         result: result,
@@ -123,42 +134,17 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
-  # Disable VPN interface
+  # Disable VPN for the requesting client
   post '/api/disable' do
     begin
-      result = vpn_manager.disable
-      vpn_status = vpn_manager.status
+      identifier = resolve_client_identifier
+      result = vpn_manager.disable_vpn_for_client_by(identifier[:type], identifier[:value])
+      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
 
       json({
         result: result,
         vpn: vpn_status
       })
-    rescue KeeneticClient::ClientError => e
-      status 503
-      json({ error: e.message })
-    rescue StandardError => e
-      status 500
-      json({ error: "Internal error: #{e.message}" })
-    end
-  end
-
-  # Set specific interface
-  post '/api/interface' do
-    begin
-      interface_name = json_body['interface']
-      
-      unless interface_name
-        status 400
-        return json({ error: 'Interface name required' })
-      end
-
-      manager = VpnManager.new(
-        client: keenetic_client,
-        interface_name: interface_name
-      )
-      
-      vpn_status = manager.status
-      json({ vpn: vpn_status })
     rescue KeeneticClient::ClientError => e
       status 503
       json({ error: e.message })
@@ -173,4 +159,3 @@ class VpnManagerApp < Sinatra::Base
     json({ error: 'Internal server error' })
   end
 end
-

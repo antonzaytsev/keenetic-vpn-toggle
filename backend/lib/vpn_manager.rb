@@ -11,35 +11,48 @@ class VpnManager
     @interface_name = interface_name
   end
 
-  def status
-    response = client.post_rci({ show: { interface: {} } })
-    data = JSON.parse(response.body)
+  # Get VPN status by identifier type (:ip or :hostname)
+  def client_vpn_status_by(type, value)
+    host = find_host_by(type, value)
+    return { connected: false, error: 'Client not found', name: value } unless host
 
-    interface_data = find_interface(data)
+    current_policy = host['policy'] || host['internet'] || ''
+    vpn_enabled = current_policy.downcase == interface_name.downcase
 
     {
-      interface_name: interface_name,
-      enabled: interface_data ? interface_enabled?(interface_data) : false,
-      connected: interface_data ? interface_connected?(interface_data) : false,
-      exists: !interface_data.nil?,
-      details: interface_data
+      connected: vpn_enabled,
+      current_interface: current_policy.empty? ? 'default' : current_policy,
+      vpn_interface: interface_name,
+      mac: host['mac'],
+      ip: host['ip'],
+      name: host['name'] || host['hostname'] || host['ip']
     }
   end
 
-  def enable
-    set_interface_state(true)
+  # Enable VPN for a client by identifier
+  def enable_vpn_for_client_by(type, value)
+    host = find_host_by(type, value)
+    return { success: false, error: 'Client not found' } unless host
+
+    set_client_policy(host['mac'], interface_name)
   end
 
-  def disable
-    set_interface_state(false)
+  # Disable VPN for a client by identifier
+  def disable_vpn_for_client_by(type, value)
+    host = find_host_by(type, value)
+    return { success: false, error: 'Client not found' } unless host
+
+    set_client_policy(host['mac'], '')
   end
 
-  def toggle
-    current_status = status
-    if current_status[:enabled]
-      disable
+  # Toggle VPN for a client by identifier
+  def toggle_vpn_for_client_by(type, value)
+    status = client_vpn_status_by(type, value)
+    
+    if status[:connected]
+      disable_vpn_for_client_by(type, value)
     else
-      enable
+      enable_vpn_for_client_by(type, value)
     end
   end
 
@@ -54,74 +67,150 @@ class VpnManager
     }
   end
 
-  def available_interfaces
-    response = client.post_rci({ show: { interface: {} } })
+  def client_name_by_ip(ip_address)
+    return nil if ip_address.nil? || ip_address.empty?
+
+    # Try multiple Keenetic endpoints to find device name
+    name = find_in_hotspot(ip_address) || 
+           find_in_arp(ip_address)
+    
+    name || ip_address
+  end
+
+  def find_in_hotspot(ip_address)
+    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
     data = JSON.parse(response.body)
 
-    interfaces = data.dig('show', 'interface') || {}
+    hosts_data = data.dig('show', 'ip', 'hotspot', 'host')
+    hosts = normalize_to_array(hosts_data)
+
+    device = hosts.find { |host| host['ip'] == ip_address }
     
-    interfaces.select do |_name, info|
-      # Filter for VPN-like interfaces
-      info['type']&.match?(/wireguard|openvpn|pptp|l2tp|ipsec|sstp/i) ||
-        info['description']&.match?(/vpn/i)
-    end.map do |name, info|
-      {
-        name: name,
-        type: info['type'],
-        description: info['description'],
-        enabled: interface_enabled?(info),
-        connected: interface_connected?(info)
-      }
+    return device['name'] if device && device['name'].to_s.strip != ''
+    return device['hostname'] if device && device['hostname'].to_s.strip != ''
+    nil
+  rescue StandardError
+    nil
+  end
+
+  def find_in_arp(ip_address)
+    response = client.post_rci({ show: { 'ip' => { 'arp' => {} } } })
+    data = JSON.parse(response.body)
+
+    # Try to get MAC from ARP, then look up by MAC in hotspot
+    arp_data = data.dig('show', 'ip', 'arp')
+    entries = normalize_to_array(arp_data)
+    
+    arp_entry = entries.find { |e| e['ip'] == ip_address }
+    return nil unless arp_entry && arp_entry['mac']
+
+    # Look up device by MAC in hotspot
+    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
+    data = JSON.parse(response.body)
+    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
+    
+    device = hosts.find { |h| h['mac']&.downcase == arp_entry['mac']&.downcase }
+    
+    return device['name'] if device && device['name'].to_s.strip != ''
+    return device['hostname'] if device && device['hostname'].to_s.strip != ''
+    nil
+  rescue StandardError
+    nil
+  end
+
+  def normalize_to_array(data)
+    case data
+    when Array then data
+    when Hash then data.values
+    else []
     end
   end
 
   private
 
-  def find_interface(data)
-    interfaces = data.dig('show', 'interface') || {}
-    interfaces[interface_name]
-  end
+  def find_host_by(type, value)
+    return nil if value.nil? || value.to_s.empty?
 
-  def interface_enabled?(interface_data)
-    # Check various fields that might indicate enabled state
-    interface_data['up'] == true ||
-      interface_data['state'] == 'up' ||
-      interface_data['link'] == 'up' ||
-      (interface_data['global'] != false && interface_data['disabled'] != true)
-  end
+    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
+    data = JSON.parse(response.body)
+    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
 
-  def interface_connected?(interface_data)
-    interface_data['connected'] == true ||
-      interface_data['state'] == 'up' ||
-      interface_data['link'] == 'up'
-  end
-
-  def set_interface_state(enabled)
-    command = if enabled
-      { interface: { name: interface_name, up: true } }
+    case type
+    when :ip
+      find_host_by_ip_in_list(hosts, value)
+    when :hostname
+      find_host_by_hostname_in_list(hosts, value)
     else
-      { interface: { name: interface_name, down: true } }
+      nil
     end
+  rescue StandardError
+    nil
+  end
+
+  def find_host_by_ip_in_list(hosts, ip_address)
+    host = hosts.find { |h| h['ip'] == ip_address }
+    return host if host
+
+    # Try to find by MAC via ARP
+    mac = find_mac_by_ip(ip_address)
+    return nil unless mac
+
+    hosts.find { |h| h['mac']&.downcase == mac.downcase }
+  end
+
+  def find_host_by_hostname_in_list(hosts, hostname)
+    # Try exact match first (case insensitive)
+    host = hosts.find { |h| h['hostname']&.downcase == hostname.downcase }
+    return host if host
+
+    # Try partial match
+    hosts.find { |h| h['hostname']&.downcase&.include?(hostname.downcase) }
+  end
+
+  def find_host_by_ip(ip_address)
+    return nil if ip_address.nil? || ip_address.empty?
+
+    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
+    data = JSON.parse(response.body)
+
+    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
+    find_host_by_ip_in_list(hosts, ip_address)
+  rescue StandardError
+    nil
+  end
+
+  def find_mac_by_ip(ip_address)
+    response = client.post_rci({ show: { 'ip' => { 'arp' => {} } } })
+    data = JSON.parse(response.body)
+
+    entries = normalize_to_array(data.dig('show', 'ip', 'arp'))
+    entry = entries.find { |e| e['ip'] == ip_address }
+    
+    entry&.dig('mac')
+  rescue StandardError
+    nil
+  end
+
+  def set_client_policy(mac, policy_interface)
+    # Keenetic RCI to set client's internet policy/interface
+    command = {
+      'ip' => {
+        'hotspot' => {
+          'host' => {
+            'mac' => mac,
+            'policy' => policy_interface
+          }
+        }
+      }
+    }
 
     response = client.post_rci(command)
     
-    # Keenetic RCI might need a different approach for enabling/disabling
-    # Try the standard interface up/down command first
-    if response.code != 200 || response.body.include?('error')
-      # Alternative approach using interface configuration
-      alternative_command = {
-        interface: {
-          name: interface_name,
-          enabled ? 'global' : 'no global' => enabled ? true : nil
-        }.compact
-      }
-      response = client.post_rci(alternative_command)
-    end
-
     {
       success: response.code == 200,
-      message: enabled ? 'Interface enabled' : 'Interface disabled'
+      message: policy_interface.empty? ? 'Using default routing' : "Using #{policy_interface}"
     }
+  rescue StandardError => e
+    { success: false, error: e.message }
   end
 end
-

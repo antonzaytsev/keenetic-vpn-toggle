@@ -19,7 +19,7 @@ function App() {
       const response = await fetch(`${API_BASE}/status`)
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error || 'Failed to fetch status')
+        throw new Error(data.error || 'Не удалось получить статус')
       }
       const data = await response.json()
       setStatus(data)
@@ -47,7 +47,7 @@ function App() {
       const response = await fetch(`${API_BASE}/toggle`, { method: 'POST' })
       if (!response.ok) {
         const data = await response.json()
-        throw new Error(data.error || 'Failed to toggle VPN')
+        throw new Error(data.error || 'Не удалось переключить VPN')
       }
       const data = await response.json()
       setStatus(prev => ({ ...prev, vpn: data.vpn }))
@@ -64,7 +64,7 @@ function App() {
       <div className="app">
         <div className="loading-container">
           <div className="loading-spinner"></div>
-          <p>Connecting to router...</p>
+          <p>Подключение к роутеру...</p>
         </div>
       </div>
     )
@@ -75,27 +75,6 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
-        <div className="header-content">
-          <div className="logo">
-            <div className="logo-icon">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M12 2L2 7L12 12L22 7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 17L12 22L22 17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M2 12L12 17L22 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            <span>VPN Manager</span>
-          </div>
-          {status?.client && (
-            <div className="device-info">
-              <span className="device-name">{status.client.device_name}</span>
-              <span className="device-model">{status.client.model}</span>
-            </div>
-          )}
-        </div>
-      </header>
-
       <main className="main">
         {error && (
           <div className="error-banner">
@@ -105,16 +84,16 @@ function App() {
               <circle cx="12" cy="16" r="1" fill="currentColor"/>
             </svg>
             <span>{error}</span>
-            <button onClick={fetchStatus} className="retry-btn">Retry</button>
+            <button onClick={fetchStatus} className="retry-btn">Повторить</button>
           </div>
         )}
 
         <div className="status-card-container">
-          <div className={`status-card ${vpnEnabled ? 'enabled' : 'disabled'}`}>
+          <div className={`status-card ${vpnConnected ? 'enabled' : 'disabled'}`}>
             <div className="status-indicator">
-              <div className={`indicator-ring ${vpnEnabled ? 'active' : ''}`}>
+              <div className={`indicator-ring ${vpnConnected ? 'active' : ''}`}>
                 <div className="indicator-core">
-                  {vpnEnabled ? (
+                  {vpnConnected ? (
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                       <path d="M12 2L3 7V12C3 17.55 6.84 22.74 12 24C17.16 22.74 21 17.55 21 12V7L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
                       <path d="M9 12L11 14L15 10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -131,27 +110,19 @@ function App() {
             </div>
 
             <div className="status-info">
+              <p className="client-name">{status?.requester?.name || status?.requester?.ip || 'Неизвестный клиент'}</p>
               <h2 className="status-title">
-                {vpnEnabled ? 'VPN Active' : 'VPN Inactive'}
+                {vpnConnected ? 'VPN подключён' : 'VPN отключён'}
               </h2>
-              <p className="status-subtitle">
-                {status?.vpn?.interface_name || 'No interface selected'}
-              </p>
-              {vpnEnabled && (
-                <div className="connection-status">
-                  <span className={`connection-dot ${vpnConnected ? 'connected' : 'connecting'}`}></span>
-                  <span>{vpnConnected ? 'Connected' : 'Establishing connection...'}</span>
-                </div>
-              )}
             </div>
 
             <button 
-              className={`toggle-button ${vpnEnabled ? 'active' : ''} ${toggling ? 'toggling' : ''}`}
+              className={`toggle-button ${vpnConnected ? 'active' : ''} ${toggling ? 'toggling' : ''}`}
               onClick={handleToggle}
               disabled={toggling}
             >
               <span className="toggle-text">
-                {toggling ? 'Processing...' : vpnEnabled ? 'Disable VPN' : 'Enable VPN'}
+                {toggling ? 'Обработка...' : vpnConnected ? 'Отключить VPN' : 'Включить VPN'}
               </span>
               <span className="toggle-icon">
                 <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -163,10 +134,6 @@ function App() {
           </div>
         </div>
       </main>
-
-      <footer className="footer">
-        <p>Keenetic VPN Manager • {status?.client?.firmware || 'Unknown firmware'}</p>
-      </footer>
     </div>
   )
 }

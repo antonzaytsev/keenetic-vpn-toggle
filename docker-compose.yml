@@ -1,39 +1,32 @@
 services:
   backend:
     build: ./backend
-    ports:
-      - "${BACKEND_PORT:-4567}:4567"
+    network_mode: host
     environment:
       - KEENETIC_HOST=${KEENETIC_HOST:-192.168.1.1}
       - KEENETIC_LOGIN=${KEENETIC_LOGIN:-admin}
       - KEENETIC_PASSWORD=${KEENETIC_PASSWORD}
       - VPN_INTERFACE=${VPN_INTERFACE:-Wireguard0}
       - RACK_ENV=development
+      - BUNDLE_PATH=/bundle
+      - PORT=${BACKEND_PORT:-4567}
+    command: sh -c "bundle install && bundle exec rerun --background --dir /app -- puma -C config/puma.rb"
     volumes:
       - ./backend:/app
-      - backend_bundle:/usr/local/bundle
-    networks:
-      - vpn-network
+      - bundle:/bundle
 
   frontend:
     build: ./frontend
-    ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+    network_mode: host
     environment:
       - NODE_ENV=development
+      - VITE_PORT=${FRONTEND_PORT:-3000}
       - VITE_BACKEND_PORT=${BACKEND_PORT:-4567}
+    command: sh -c "pnpm install && pnpm dev"
     volumes:
       - ./frontend:/app
-      - /app/node_modules
-    depends_on:
-      - backend
-    networks:
-      - vpn-network
-
-networks:
-  vpn-network:
-    driver: bridge
+      - node_modules:/app/node_modules
 
 volumes:
-  backend_bundle:
-
+  bundle:
+  node_modules:
