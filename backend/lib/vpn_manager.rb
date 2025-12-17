@@ -4,67 +4,76 @@ require 'json'
 require_relative 'keenetic_client'
 
 class VpnManager
-  attr_reader :client, :interface_name
+  attr_reader :client, :policy_name
 
-  def initialize(client:, interface_name:)
+  def initialize(client:, policy_name:)
     @client = client
-    @interface_name = interface_name
+    @policy_name = policy_name
   end
 
-  # Get VPN status by identifier type (:ip or :hostname)
-  def client_vpn_status_by(type, value)
-    host = find_host_by(type, value)
-    return { connected: false, error: 'Client not found', name: value } unless host
+  # Get VPN status by IP
+  def client_vpn_status_by(ip)
+    data = load_data
+    return { connected: false, error: 'Failed to load data', name: ip } unless data
 
-    current_policy = host['policy'] || host['internet'] || ''
-    vpn_enabled = current_policy.downcase == interface_name.downcase
+    host = find_client_by_ip(data, ip)
+    return { connected: false, error: 'Client not found', name: ip } unless host
 
-    # Get friendly name for current interface
-    current_interface_name = if current_policy.empty?
-      'По умолчанию'
-    else
-      get_interface_description(current_policy) || current_policy
-    end
-
-    # Get friendly name for VPN interface
-    vpn_interface_friendly = get_interface_description(interface_name) || interface_name
+    mac = host['mac']
+    current_policy_id = find_client_policy(data, mac)
+    vpn_policy_id = find_policy_id(data, policy_name)
+    vpn_enabled = current_policy_id == vpn_policy_id
 
     {
       connected: vpn_enabled,
-      current_interface: current_interface_name,
-      vpn_interface: vpn_interface_friendly,
-      vpn_interface_id: interface_name,
-      mac: host['mac'],
+      current_policy: current_policy_id ? policy_name_by_id(data, current_policy_id) : nil,
+      vpn_policy: policy_name,
+      mac: mac,
       ip: host['ip'],
       name: host['name'] || host['hostname'] || host['ip']
     }
   end
 
-  # Enable VPN for a client by identifier
-  def enable_vpn_for_client_by(type, value)
-    host = find_host_by(type, value)
+  # Toggle VPN for a client by IP
+  def toggle_vpn_for_client_by(ip)
+    data = load_data
+    return { success: false, error: 'Failed to load data' } unless data
+
+    host = find_client_by_ip(data, ip)
     return { success: false, error: 'Client not found' } unless host
 
-    set_client_policy(host['mac'], interface_name)
+    mac = host['mac']
+    vpn_policy_id = find_policy_id(data, policy_name)
+    return { success: false, error: "Policy '#{policy_name}' not found" } unless vpn_policy_id
+
+    current_policy_id = find_client_policy(data, mac)
+
+    update_client_policy(mac, current_policy_id, vpn_policy_id)
   end
 
-  # Disable VPN for a client by identifier
-  def disable_vpn_for_client_by(type, value)
-    host = find_host_by(type, value)
+  # Enable VPN for a client by IP
+  def enable_vpn_for_client_by(ip)
+    data = load_data
+    return { success: false, error: 'Failed to load data' } unless data
+
+    host = find_client_by_ip(data, ip)
     return { success: false, error: 'Client not found' } unless host
 
-    set_client_policy(host['mac'], '')
+    vpn_policy_id = find_policy_id(data, policy_name)
+    return { success: false, error: "Policy '#{policy_name}' not found" } unless vpn_policy_id
+
+    set_client_policy(host['mac'], vpn_policy_id)
   end
 
-  # Toggle VPN for a client by identifier
-  def toggle_vpn_for_client_by(type, value)
-    status = client_vpn_status_by(type, value)
+  # Disable VPN for a client by IP
+  def disable_vpn_for_client_by(ip)
+    data = load_data
+    return { success: false, error: 'Failed to load data' } unless data
 
-    if status[:connected]
-      disable_vpn_for_client_by(type, value)
-    else
-      enable_vpn_for_client_by(type, value)
-    end
+    host = find_client_by_ip(data, ip)
+    return { success: false, error: 'Client not found' } unless host
+
+    set_client_policy(host['mac'], { no: true })
   end
 
   def client_info
@@ -78,167 +87,100 @@ class VpnManager
     }
   end
 
-  # Get friendly name/description for an interface
-  def get_interface_description(iface_name)
-    return nil if iface_name.nil? || iface_name.empty?
-
-    response = client.post_rci({ show: { interface: {} } })
-    data = JSON.parse(response.body)
-
-    interfaces = data.dig('show', 'interface') || {}
-    iface = interfaces[iface_name]
-
-    return nil unless iface
-
-    # Try description first, then other name fields
-    iface['description'] || iface['alias'] || nil
-  rescue StandardError
-    nil
-  end
-
-  def client_name_by_ip(ip_address)
-    ip_address = '192.168.0.2'
-    return nil if ip_address.nil? || ip_address.empty?
-
-    # Try multiple Keenetic endpoints to find device name
-    name = find_in_hotspot(ip_address) ||
-           find_in_arp(ip_address)
-
-    name || ip_address
-  end
-
-  def find_in_hotspot(ip_address)
-    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
-    data = JSON.parse(response.body)
-
-    hosts_data = data.dig('show', 'ip', 'hotspot', 'host')
-    hosts = normalize_to_array(hosts_data)
-
-    device = hosts.find { |host| host['ip'] == ip_address }
-
-    return device['name'] if device && device['name'].to_s.strip != ''
-    return device['hostname'] if device && device['hostname'].to_s.strip != ''
-    nil
-  rescue StandardError
-    nil
-  end
-
-  def find_in_arp(ip_address)
-    response = client.post_rci({ show: { 'ip' => { 'arp' => {} } } })
-    data = JSON.parse(response.body)
-
-    # Try to get MAC from ARP, then look up by MAC in hotspot
-    arp_data = data.dig('show', 'ip', 'arp')
-    entries = normalize_to_array(arp_data)
-
-    arp_entry = entries.find { |e| e['ip'] == ip_address }
-    return nil unless arp_entry && arp_entry['mac']
-
-    # Look up device by MAC in hotspot
-    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
-    data = JSON.parse(response.body)
-    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
-
-    device = hosts.find { |h| h['mac']&.downcase == arp_entry['mac']&.downcase }
-
-    return device['name'] if device && device['name'].to_s.strip != ''
-    return device['hostname'] if device && device['hostname'].to_s.strip != ''
-    nil
-  rescue StandardError
-    nil
-  end
-
-  def normalize_to_array(data)
-    case data
-    when Array then data
-    when Hash then data.values
-    else []
-    end
-  end
-
   private
 
-  def find_host_by(type, value)
-    return nil if value.nil? || value.to_s.empty?
+  def load_data
+    body = [
+      { 'show' => { 'sc' => { 'ip' => { 'policy' => {} } } } },
+      { 'show' => { 'sc' => { 'ip' => { 'hotspot' => { 'host' => {} } } } } },
+      { 'show' => { 'ip' => { 'hotspot' => {} } } }
+    ]
 
-    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
+    response = client.post_rci(body)
+    return nil if response.code != 200
+
     data = JSON.parse(response.body)
-    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
+    result = {}
+    data.each { |el| deep_merge!(result, el) }
+    result
+  rescue StandardError
+    nil
+  end
 
-    case type
-    when :ip
-      find_host_by_ip_in_list(hosts, value)
-    when :hostname
-      find_host_by_hostname_in_list(hosts, value)
-    else
-      nil
+  def deep_merge!(target, source)
+    source.each do |key, value|
+      if value.is_a?(Hash) && target[key].is_a?(Hash)
+        deep_merge!(target[key], value)
+      else
+        target[key] = value
+      end
     end
-  rescue StandardError
+    target
+  end
+
+  def find_policy_id(data, name)
+    policies = data.dig('show', 'sc', 'ip', 'policy') || {}
+
+    policies.each do |policy_id, policy_data|
+      return policy_id if policy_data['description'] == name
+    end
+
     nil
   end
 
-  def find_host_by_ip_in_list(hosts, ip_address)
-    host = hosts.find { |h| h['ip'] == ip_address }
-    return host if host
-
-    # Try to find by MAC via ARP
-    mac = find_mac_by_ip(ip_address)
-    return nil unless mac
-
-    hosts.find { |h| h['mac']&.downcase == mac.downcase }
+  def policy_name_by_id(data, id)
+    policies = data.dig('show', 'sc', 'ip', 'policy') || {}
+    policies.dig(id, 'description')
   end
 
-  def find_host_by_hostname_in_list(hosts, hostname)
-    # Try exact match first (case insensitive)
-    host = hosts.find { |h| h['hostname']&.downcase == hostname.downcase }
-    return host if host
+  def find_client_by_ip(data, ip)
+    hosts = data.dig('show', 'ip', 'hotspot', 'host') || []
+    hosts = hosts.values if hosts.is_a?(Hash)
 
-    # Try partial match
-    hosts.find { |h| h['hostname']&.downcase&.include?(hostname.downcase) }
+    hosts.find { |h| h['ip'] == ip }
   end
 
-  def find_host_by_ip(ip_address)
-    return nil if ip_address.nil? || ip_address.empty?
+  def find_client_policy(data, mac)
+    hosts = data.dig('show', 'sc', 'ip', 'hotspot', 'host') || []
+    hosts = hosts.values if hosts.is_a?(Hash)
 
-    response = client.post_rci({ show: { 'ip' => { 'hotspot' => {} } } })
-    data = JSON.parse(response.body)
-
-    hosts = normalize_to_array(data.dig('show', 'ip', 'hotspot', 'host'))
-    find_host_by_ip_in_list(hosts, ip_address)
-  rescue StandardError
-    nil
+    host = hosts.find { |h| h['mac'] == mac }
+    host&.dig('policy')
   end
 
-  def find_mac_by_ip(ip_address)
-    response = client.post_rci({ show: { 'ip' => { 'arp' => {} } } })
-    data = JSON.parse(response.body)
+  def update_client_policy(mac, current_policy_id, vpn_policy_id)
+    # If client has policy, remove it; otherwise set VPN policy
+    policy = current_policy_id ? { no: true } : vpn_policy_id
+    enabled = !current_policy_id
 
-    entries = normalize_to_array(data.dig('show', 'ip', 'arp'))
-    entry = entries.find { |e| e['ip'] == ip_address }
+    body = [
+      { 'webhelp' => { 'event' => { 'push' => { 'data' => { 'type' => 'configuration_change', 'value' => { 'url' => '/policies/policy-consumers' } }.to_json } } } },
+      { 'ip' => { 'hotspot' => { 'host' => { 'mac' => mac, 'permit' => true, 'policy' => policy } } } },
+      { 'system' => { 'configuration' => { 'save' => {} } } }
+    ]
 
-    entry&.dig('mac')
-  rescue StandardError
-    nil
-  end
-
-  def set_client_policy(mac, policy_interface)
-    # Keenetic RCI to set client's internet policy/interface
-    command = {
-      'ip' => {
-        'hotspot' => {
-          'host' => {
-            'mac' => mac,
-            'policy' => policy_interface
-          }
-        }
-      }
-    }
-
-    response = client.post_rci(command)
+    response = client.post_rci(body)
 
     {
       success: response.code == 200,
-      message: policy_interface.empty? ? 'Using default routing' : "Using #{policy_interface}"
+      message: enabled ? "VPN enabled" : "VPN disabled"
+    }
+  rescue StandardError => e
+    { success: false, error: e.message }
+  end
+
+  def set_client_policy(mac, policy)
+    body = [
+      { 'webhelp' => { 'event' => { 'push' => { 'data' => { 'type' => 'configuration_change', 'value' => { 'url' => '/policies/policy-consumers' } }.to_json } } } },
+      { 'ip' => { 'hotspot' => { 'host' => { 'mac' => mac, 'permit' => true, 'policy' => policy } } } },
+      { 'system' => { 'configuration' => { 'save' => {} } } }
+    ]
+
+    response = client.post_rci(body)
+
+    {
+      success: response.code == 200,
+      message: policy.is_a?(Hash) ? 'VPN disabled' : 'VPN enabled'
     }
   rescue StandardError => e
     { success: false, error: e.message }

@@ -8,7 +8,7 @@ services:
       - KEENETIC_HOST=${KEENETIC_HOST:-192.168.1.1}
       - KEENETIC_LOGIN=${KEENETIC_LOGIN:-admin}
       - KEENETIC_PASSWORD=${KEENETIC_PASSWORD}
-      - VPN_INTERFACE=${VPN_INTERFACE:-Wireguard0}
+      - VPN_POLICY=${VPN_POLICY:-!WG1}
       - RACK_ENV=development
       - BUNDLE_PATH=/bundle
       - PORT=${BACKEND_PORT:-4567}

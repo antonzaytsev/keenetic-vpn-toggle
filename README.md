@@ -21,7 +21,7 @@ Web interface to enable/disable VPN interfaces on Keenetic routers.
    KEENETIC_HOST=192.168.1.1
    KEENETIC_LOGIN=admin
    KEENETIC_PASSWORD=your_password
-   VPN_INTERFACE=Wireguard0
+   VPN_POLICY=!WG1
    ```
 
 3. Start with Docker Compose:
@@ -38,7 +38,7 @@ Web interface to enable/disable VPN interfaces on Keenetic routers.
 | `KEENETIC_HOST` | Router IP address | 192.168.1.1 |
 | `KEENETIC_LOGIN` | Router admin login | admin |
 | `KEENETIC_PASSWORD` | Router admin password | (required) |
-| `VPN_INTERFACE` | VPN interface name | Wireguard0 |
+| `VPN_POLICY` | VPN policy name | !WG1 |
 
 ## API Endpoints
 

@@ -44,7 +44,7 @@ class VpnManagerApp < Sinatra::Base
     def vpn_manager
       @vpn_manager ||= VpnManager.new(
         client: keenetic_client,
-        interface_name: ENV.fetch('VPN_INTERFACE', 'Wireguard0')
+        policy_name: ENV.fetch('VPN_POLICY', '!WG1')
       )
     end
 
@@ -68,16 +68,6 @@ class VpnManagerApp < Sinatra::Base
       # Handle IPv6-mapped IPv4 addresses like ::ffff:192.168.1.100
       ip.start_with?('::ffff:') ? ip[7..] : ip
     end
-
-    def resolve_client_identifier
-      ip = client_ip
-      # If localhost, use hostname to find device in Keenetic
-      if ip == '127.0.0.1' || ip == '::1' || ip&.start_with?('127.')
-        { type: :hostname, value: Socket.gethostname.split('.').first }
-      else
-        { type: :ip, value: ip }
-      end
-    end
   end
 
   # Health check
@@ -89,14 +79,14 @@ class VpnManagerApp < Sinatra::Base
   get '/api/status' do
     begin
       router_info = vpn_manager.client_info
-      identifier = resolve_client_identifier
-      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
+      ip = client_ip
+      vpn_status = vpn_manager.client_vpn_status_by(ip)
 
       json({
         client: router_info,
         vpn: vpn_status,
         requester: {
-          ip: vpn_status[:ip] || client_ip,
+          ip: vpn_status[:ip] || ip,
           name: vpn_status[:name]
         }
       })
@@ -112,9 +102,9 @@ class VpnManagerApp < Sinatra::Base
   # Toggle VPN for the requesting client
   post '/api/toggle' do
     begin
-      identifier = resolve_client_identifier
-      result = vpn_manager.toggle_vpn_for_client_by(identifier[:type], identifier[:value])
-      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
+      ip = client_ip
+      result = vpn_manager.toggle_vpn_for_client_by(ip)
+      vpn_status = vpn_manager.client_vpn_status_by(ip)
 
       json({
         result: result,
@@ -132,9 +122,9 @@ class VpnManagerApp < Sinatra::Base
   # Enable VPN for the requesting client
   post '/api/enable' do
     begin
-      identifier = resolve_client_identifier
-      result = vpn_manager.enable_vpn_for_client_by(identifier[:type], identifier[:value])
-      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
+      ip = client_ip
+      result = vpn_manager.enable_vpn_for_client_by(ip)
+      vpn_status = vpn_manager.client_vpn_status_by(ip)
 
       json({
         result: result,
@@ -152,9 +142,9 @@ class VpnManagerApp < Sinatra::Base
   # Disable VPN for the requesting client
   post '/api/disable' do
     begin
-      identifier = resolve_client_identifier
-      result = vpn_manager.disable_vpn_for_client_by(identifier[:type], identifier[:value])
-      vpn_status = vpn_manager.client_vpn_status_by(identifier[:type], identifier[:value])
+      ip = client_ip
+      result = vpn_manager.disable_vpn_for_client_by(ip)
+      vpn_status = vpn_manager.client_vpn_status_by(ip)
 
       json({
         result: result,
