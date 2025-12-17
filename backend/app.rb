@@ -28,7 +28,7 @@ class VpnManagerApp < Sinatra::Base
 
   configure do
     set :show_exceptions, false
-    set :protection, false
+    set :host_authorization, { permitted_hosts: [".internal"] }
     set :logging, true
   end
 
