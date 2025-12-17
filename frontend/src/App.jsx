@@ -2,6 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import './App.css'
 
 const getApiBase = () => {
+  const backendHost = import.meta.env.VITE_BACKEND_HOST
+  if (backendHost) {
+    return `http://${backendHost}/api`
+  }
   const backendPort = import.meta.env.VITE_BACKEND_PORT || '4567'
   return `http://${window.location.hostname}:${backendPort}/api`
 }

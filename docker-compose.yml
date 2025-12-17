@@ -23,6 +23,7 @@ services:
     environment:
       - NODE_ENV=development
       - VITE_PORT=${FRONTEND_PORT:-3000}
+      - VITE_BACKEND_HOST=${BACKEND_HOST:-}
       - VITE_BACKEND_PORT=${BACKEND_PORT:-4567}
     command: sh -c "pnpm install && pnpm dev"
     volumes:
