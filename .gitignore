@@ -1,0 +1,25 @@
+# Environment
+.env
+.env.local
+
+# Ruby
+backend/.bundle
+backend/vendor/bundle
+
+# Node
+frontend/node_modules
+frontend/dist
+frontend/.pnpm-store
+
+# OS
+.DS_Store
+*.log
+
+# IDE
+.idea
+.vscode
+
+# Cookies
+*.txt
+/tmp
+

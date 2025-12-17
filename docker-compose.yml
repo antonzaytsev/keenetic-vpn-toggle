@@ -1,0 +1,39 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "${BACKEND_PORT:-4567}:4567"
+    environment:
+      - KEENETIC_HOST=${KEENETIC_HOST:-192.168.1.1}
+      - KEENETIC_LOGIN=${KEENETIC_LOGIN:-admin}
+      - KEENETIC_PASSWORD=${KEENETIC_PASSWORD}
+      - VPN_INTERFACE=${VPN_INTERFACE:-Wireguard0}
+      - RACK_ENV=development
+    volumes:
+      - ./backend:/app
+      - backend_bundle:/usr/local/bundle
+    networks:
+      - vpn-network
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=development
+      - VITE_BACKEND_PORT=${BACKEND_PORT:-4567}
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - backend
+    networks:
+      - vpn-network
+
+networks:
+  vpn-network:
+    driver: bridge
+
+volumes:
+  backend_bundle:
+
