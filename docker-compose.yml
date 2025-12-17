@@ -12,6 +12,7 @@ services:
       - RACK_ENV=development
       - BUNDLE_PATH=/bundle
       - PORT=${BACKEND_PORT:-4567}
+      - RACK_ALLOWED_HOSTS=.internal,localhost,0.0.0.0
     command: sh -c "bundle install && bundle exec puma -C config/puma.rb"
     volumes:
       - ./backend:/app
