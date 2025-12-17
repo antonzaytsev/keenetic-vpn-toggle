@@ -8,7 +8,7 @@ export default defineConfig({
   server: {
     host: '0.0.0.0',
     port,
-    allowedHosts: 'all'
+    allowedHosts: ['.internal', 'vpn.internal', 'localhost']
   },
   preview: {
     host: '0.0.0.0',
