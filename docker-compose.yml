@@ -14,6 +14,7 @@ services:
       - PORT=${BACKEND_PORT:-4567}
       - RACK_ALLOWED_HOSTS=.internal,localhost,0.0.0.0
     command: sh -c "bundle install && bundle exec puma -C config/puma.rb"
+    restart: unless-stopped
     volumes:
       - ./backend:/app
       - bundle:/bundle
@@ -21,6 +22,7 @@ services:
   frontend:
     build: ./frontend
     network_mode: host
+    restart: unless-stopped
     environment:
       - NODE_ENV=development
       - VITE_PORT=${FRONTEND_PORT:-3000}
