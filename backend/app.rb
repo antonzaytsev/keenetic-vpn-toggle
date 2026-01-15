@@ -28,7 +28,7 @@ class VpnManagerApp < Sinatra::Base
 
   configure do
     set :show_exceptions, false
-    set :host_authorization, { permitted_hosts: [".internal"] }
+    set :host_authorization, { permitted_hosts: [".internal", "localhost", "127.0.0.1"] }
     set :logging, true
   end
 
@@ -46,10 +46,19 @@ class VpnManagerApp < Sinatra::Base
       )
     end
 
+    def vpn_policy
+      @vpn_policy ||= ENV.fetch('VPN_POLICY', '!WG1')
+    end
+
+    def vpn_policy=(policy)
+      @vpn_policy = policy
+      @vpn_manager = nil  # Reset vpn_manager to use new policy
+    end
+
     def vpn_manager
       @vpn_manager ||= VpnManager.new(
         client: keenetic_client,
-        policy_name: ENV.fetch('VPN_POLICY', '!WG1')
+        policy_name: vpn_policy
       )
     end
 
