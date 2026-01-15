@@ -21,7 +21,6 @@ Web interface to enable/disable VPN interfaces on Keenetic routers.
    KEENETIC_HOST=192.168.1.1
    KEENETIC_LOGIN=admin
    KEENETIC_PASSWORD=your_password
-   VPN_POLICY=!WG1
    ```
 
 3. Start with Docker Compose:
@@ -53,4 +52,3 @@ Web interface to enable/disable VPN interfaces on Keenetic routers.
 - **Backend**: Ruby (Sinatra) with Typhoeus HTTP client
 - **Frontend**: React with Vite
 - **Infrastructure**: Docker Compose
-

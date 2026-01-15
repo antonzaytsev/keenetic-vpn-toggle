@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import './App.css'
 
 const getApiBase = () => {
@@ -17,35 +17,114 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
   const [error, setError] = useState(null)
+  const [policies, setPolicies] = useState([])
+  const [selectedPolicy, setSelectedPolicy] = useState(null)
+  const [showPolicySelector, setShowPolicySelector] = useState(false)
+  const policyPickerRef = useRef(null)
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (policyPickerRef.current && !policyPickerRef.current.contains(event.target)) {
+        setShowPolicySelector(false)
+      }
+    }
+
+    if (showPolicySelector) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [showPolicySelector])
 
   const fetchStatus = useCallback(async () => {
     try {
+      console.log(1)
       const response = await fetch(`${API_BASE}/status`)
       if (!response.ok) {
         const data = await response.json()
         throw new Error(data.error || 'Не удалось получить статус')
       }
+
       const data = await response.json()
       setStatus(data)
+
       setError(null)
     } catch (err) {
       setError(err.message)
     }
   }, [])
 
+  const controlVpn = async (policy) => {
+    setToggling(true)
+    try {
+      const response = await fetch(`${API_BASE}/vpn`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy })
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Не удалось выполнить операцию')
+      }
+      const data = await response.json()
+      setStatus(prev => ({ ...prev, vpn: data }))
+      setError(null)
+      return data
+    } catch (err) {
+      setError(err.message)
+      throw err
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const selectPolicy = async (policyName) => {
+    setSelectedPolicy(policyName)
+    setShowPolicySelector(false)
+
+    if (vpnConnected) {
+      await controlVpn(policyName)
+    }
+  }
+
   useEffect(() => {
     const controller = new AbortController()
-    
+
     const loadData = async () => {
       setLoading(true)
       try {
-        const response = await fetch(`${API_BASE}/status`, { signal: controller.signal })
-        if (!response.ok) {
-          const data = await response.json()
+        const [statusResponse, policiesResponse] = await Promise.all([
+          fetch(`${API_BASE}/status`, { signal: controller.signal }),
+          fetch(`${API_BASE}/policies`, { signal: controller.signal })
+        ])
+
+        if (!statusResponse.ok) {
+          const data = await statusResponse.json()
           throw new Error(data.error || 'Не удалось получить статус')
         }
-        const data = await response.json()
-        setStatus(data)
+        const statusData = await statusResponse.json()
+        setStatus(statusData)
+
+        let policyList = []
+        if (policiesResponse.ok) {
+          const policiesData = await policiesResponse.json()
+          policyList = policiesData.policies || []
+          setPolicies(policyList)
+
+          // Initialize selected policy from current status or default to first
+          const currentPolicy = statusData?.vpn?.current_policy
+          const isVpnPolicy = currentPolicy && policyList.some(p => p.name === currentPolicy)
+
+          if (isVpnPolicy) {
+            setSelectedPolicy(currentPolicy)
+          } else if (policyList.length > 0) {
+            setSelectedPolicy(policyList[0].name)
+          }
+        }
+
         setError(null)
       } catch (err) {
         if (err.name !== 'AbortError') {
@@ -58,27 +137,15 @@ function App() {
       }
     }
     loadData()
-    
+
     return () => controller.abort()
   }, [])
 
   const handleToggle = async () => {
-    setToggling(true)
-    try {
-      const response = await fetch(`${API_BASE}/toggle`, { method: 'POST' })
-      if (!response.ok) {
-        const data = await response.json()
-        throw new Error(data.error || 'Не удалось переключить VPN')
-      }
-      const data = await response.json()
-      setStatus(prev => ({ ...prev, vpn: data.vpn }))
-      setError(null)
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setToggling(false)
-    }
+    await controlVpn(vpnConnected ? null : selectedPolicy)
   }
+
+  const vpnConnected = status?.vpn?.current_policy_id
 
   if (loading) {
     return (
@@ -90,9 +157,6 @@ function App() {
       </div>
     )
   }
-
-  const vpnEnabled = status?.vpn?.enabled
-  const vpnConnected = status?.vpn?.connected
 
   return (
     <div className="app">
@@ -131,13 +195,48 @@ function App() {
             </div>
 
             <div className="status-info">
-              <p className="client-name">{status?.requester?.name || status?.requester?.ip || 'Неизвестный клиент'}</p>
+              <p className="client-name">{status?.vpn?.name || status?.vpn?.ip || 'Неизвестный клиент'}</p>
               <h2 className="status-title">
                 {vpnConnected ? 'VPN подключён' : 'VPN отключён'}
               </h2>
             </div>
 
-            <button 
+            {policies.length > 0 && (
+              <div className="policy-picker" ref={policyPickerRef}>
+                <div
+                  className="policy-indicator"
+                  onClick={() => setShowPolicySelector(!showPolicySelector)}
+                >
+                  <span className="policy-dot"></span>
+                  <span className="policy-label">
+                    {selectedPolicy || 'Выберите политику'}
+                  </span>
+                  <svg className={`policy-arrow ${showPolicySelector ? 'open' : ''}`} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M6 9L12 15L18 9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                  </svg>
+                </div>
+
+                {showPolicySelector && (
+                  <div className="policy-selector">
+                    {policies.map((policy) => (
+                      <button
+                        key={policy.id}
+                        className={`policy-option ${policy.name === selectedPolicy ? 'active' : ''}`}
+                        onClick={() => selectPolicy(policy.name)}
+                        disabled={toggling}
+                      >
+                        <div className="policy-option-info">
+                          <span className="policy-option-dot"></span>
+                          <span className="policy-option-name">{policy.name}</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            <button
               className={`toggle-button ${vpnConnected ? 'active' : ''} ${toggling ? 'toggling' : ''}`}
               onClick={handleToggle}
               disabled={toggling}
@@ -160,4 +259,3 @@ function App() {
 }
 
 export default App
-

@@ -46,20 +46,8 @@ class VpnManagerApp < Sinatra::Base
       )
     end
 
-    def vpn_policy
-      @vpn_policy ||= ENV.fetch('VPN_POLICY', '!WG1')
-    end
-
-    def vpn_policy=(policy)
-      @vpn_policy = policy
-      @vpn_manager = nil  # Reset vpn_manager to use new policy
-    end
-
     def vpn_manager
-      @vpn_manager ||= VpnManager.new(
-        client: keenetic_client,
-        policy_name: vpn_policy
-      )
+      VpnManager.new(client: keenetic_client)
     end
 
     def json_body
@@ -98,30 +86,6 @@ class VpnManagerApp < Sinatra::Base
 
       json({
         client: router_info,
-        vpn: vpn_status,
-        requester: {
-          ip: vpn_status[:ip] || ip,
-          name: vpn_status[:name]
-        }
-      })
-    rescue KeeneticClient::ClientError => e
-      status 503
-      json({ error: e.message })
-    rescue StandardError => e
-      status 500
-      json({ error: "Internal error: #{e.message}" })
-    end
-  end
-
-  # Toggle VPN for the requesting client
-  post '/api/toggle' do
-    begin
-      ip = client_ip
-      result = vpn_manager.toggle_vpn_for_client_by(ip)
-      vpn_status = vpn_manager.client_vpn_status_by(ip)
-
-      json({
-        result: result,
         vpn: vpn_status
       })
     rescue KeeneticClient::ClientError => e
@@ -133,17 +97,11 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
-  # Enable VPN for the requesting client
-  post '/api/enable' do
+  # Get available VPN policies
+  get '/api/policies' do
     begin
-      ip = client_ip
-      result = vpn_manager.enable_vpn_for_client_by(ip)
-      vpn_status = vpn_manager.client_vpn_status_by(ip)
-
-      json({
-        result: result,
-        vpn: vpn_status
-      })
+      policies = vpn_manager.available_policies
+      json({ policies: policies })
     rescue KeeneticClient::ClientError => e
       status 503
       json({ error: e.message })
@@ -153,17 +111,20 @@ class VpnManagerApp < Sinatra::Base
     end
   end
 
-  # Disable VPN for the requesting client
-  post '/api/disable' do
+  # Control VPN - enable/disable with policy selection
+  post '/api/vpn' do
     begin
+      policy_name = json_body['policy']
       ip = client_ip
-      result = vpn_manager.disable_vpn_for_client_by(ip)
-      vpn_status = vpn_manager.client_vpn_status_by(ip)
 
-      json({
-        result: result,
-        vpn: vpn_status
-      })
+      if policy_name
+        vpn_manager.enable_vpn_for_client_by(ip, policy_name)
+      else
+        vpn_manager.disable_vpn_for_client_by(ip)
+      end
+
+      vpn_status = vpn_manager.client_vpn_status_by(ip)
+      json(vpn_status)
     rescue KeeneticClient::ClientError => e
       status 503
       json({ error: e.message })

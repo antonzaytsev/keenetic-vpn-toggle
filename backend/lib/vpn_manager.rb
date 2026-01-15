@@ -4,15 +4,15 @@ require 'json'
 require_relative 'keenetic_client'
 
 class VpnManager
-  attr_reader :client, :policy_name
+  attr_reader :client
 
-  def initialize(client:, policy_name:)
+  def initialize(client:)
     @client = client
-    @policy_name = policy_name
   end
 
   # Get VPN status by IP
   def client_vpn_status_by(ip)
+    # binding.pry
     data = load_data
     return { connected: false, error: 'Failed to load data', name: ip } unless data
 
@@ -21,38 +21,19 @@ class VpnManager
 
     mac = host['mac']
     current_policy_id = find_client_policy(data, mac)
-    vpn_policy_id = find_policy_id(data, policy_name)
-    vpn_enabled = current_policy_id == vpn_policy_id
+    current_policy_name = current_policy_id ? policy_name_by_id(data, current_policy_id) : nil
 
     {
-      connected: vpn_enabled,
-      current_policy: current_policy_id ? policy_name_by_id(data, current_policy_id) : nil,
-      vpn_policy: policy_name,
+      current_policy_id: current_policy_id,
+      current_policy: current_policy_name,
       mac: mac,
       ip: host['ip'],
       name: host['name'] || host['hostname'] || host['ip']
     }
   end
 
-  # Toggle VPN for a client by IP
-  def toggle_vpn_for_client_by(ip)
-    data = load_data
-    return { success: false, error: 'Failed to load data' } unless data
-
-    host = find_client_by_ip(data, ip)
-    return { success: false, error: 'Client not found' } unless host
-
-    mac = host['mac']
-    vpn_policy_id = find_policy_id(data, policy_name)
-    return { success: false, error: "Policy '#{policy_name}' not found" } unless vpn_policy_id
-
-    current_policy_id = find_client_policy(data, mac)
-
-    update_client_policy(mac, current_policy_id, vpn_policy_id)
-  end
-
-  # Enable VPN for a client by IP
-  def enable_vpn_for_client_by(ip)
+  # Enable VPN for a client by IP with specified policy
+  def enable_vpn_for_client_by(ip, policy_name)
     data = load_data
     return { success: false, error: 'Failed to load data' } unless data
 
@@ -65,7 +46,7 @@ class VpnManager
     set_client_policy(host['mac'], vpn_policy_id)
   end
 
-  # Disable VPN for a client by IP
+  # Disable VPN for a client by IP (switch to Default policy)
   def disable_vpn_for_client_by(ip)
     data = load_data
     return { success: false, error: 'Failed to load data' } unless data
@@ -73,7 +54,15 @@ class VpnManager
     host = find_client_by_ip(data, ip)
     return { success: false, error: 'Client not found' } unless host
 
-    set_client_policy(host['mac'], { no: true })
+    # Find Default policy ID
+    default_policy_id = find_policy_id(data, 'Default policy')
+
+    if default_policy_id
+      set_client_policy(host['mac'], default_policy_id)
+    else
+      # Fallback: remove policy if Default policy not found
+      set_client_policy(host['mac'], { no: true })
+    end
   end
 
   def client_info
@@ -85,6 +74,39 @@ class VpnManager
       firmware: data.dig('show', 'version', 'title') || 'Unknown',
       model: data.dig('show', 'version', 'model') || 'Unknown'
     }
+  end
+
+  # Get all available policies (excluding default)
+  def available_policies
+    body = [
+      { 'show' => { 'sc' => { 'ip' => { 'policy' => {} } } } }
+    ]
+
+    response = client.post_rci(body)
+    return [] if response.code != 200
+
+    data = JSON.parse(response.body)
+    result = {}
+    data.each { |el| deep_merge!(result, el) }
+
+    policies = result.dig('show', 'sc', 'ip', 'policy') || {}
+
+    # Filter out default policy, return all others
+    vpn_policies = policies.reject do |_id, policy|
+      policy['description'].nil? ||
+      policy['description'].downcase == 'default policy' ||
+      policy['description'].empty?
+    end
+
+    vpn_policies.map do |id, policy|
+      {
+        id: id,
+        name: policy['description'],
+        permit: policy['permit'] || []
+      }
+    end.sort_by { |p| p[:id].to_s.gsub(/\D/, '').to_i }
+  rescue StandardError
+    []
   end
 
   private
